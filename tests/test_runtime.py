@@ -12,6 +12,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from pydantic import ValidationError
 
@@ -209,6 +210,45 @@ class RuntimeTest(unittest.TestCase):
             thread.join(timeout=10)
         self.assertFalse(thread.is_alive())
         self.assertEqual(errors, [])
+
+    def test_recovered_verifier_cannot_publish_a_late_success(self) -> None:
+        self.implement(self.claim())
+        started = threading.Event()
+        release = threading.Event()
+        errors: list[BaseException] = []
+
+        def delayed_check(check: Check, workspace: Path) -> dict[str, Any]:
+            started.set()
+            release.wait(timeout=10)
+            return {"id": check.id, "passed": True, "reason": "passed"}
+
+        def verify() -> None:
+            controller = Harness(self.root / "runtime", clock=lambda: self.now)
+            try:
+                controller.advance(self.spec.id, {"action": "verify"})
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                controller.close()
+
+        with patch("harness.runtime.run_check", side_effect=delayed_check):
+            thread = threading.Thread(target=verify)
+            thread.start()
+            try:
+                self.assertTrue(started.wait(timeout=10))
+                reservation = self.harness.store.get(self.spec.id)["verification_lease"]
+                self.now = reservation["expires_at"] + 1
+                self.assertEqual(
+                    self.harness.advance(self.spec.id, {"action": "recover"})["state"], "ready"
+                )
+                self.claim(actor="replacement")
+            finally:
+                release.set()
+                thread.join(timeout=10)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(self.harness.inspect(self.spec.id)["state"], "implementing")
+        self.assertFalse(self.harness.inspect(self.spec.id)["evidence_passed"])
 
     def test_frozen_scope_and_acceptance_tamper(self) -> None:
         packet = self.claim()

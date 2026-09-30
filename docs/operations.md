@@ -64,9 +64,14 @@ small/strongはroutingの推奨tier。実際のLuna/Sol/Astra選択はexecutor�
 completedのworkspaceとrevisionを確認してローカル差分を取り出す。
 元リポジトリへの反映、PR/push/mergeはcontrollerが勝手に実行しない。
 複数タスクの成果を統合した状態でも受入チェックを再実行する。
+patchが必要なら、完了済みコピーのchanged_pathsだけをstageし、base_commitに対する
+`git diff --cached --binary`をローカルfileへ保存する。これで新規fileと削除も含められる。
 過去の実タスクは`examples/evaluation-template.json`を基に登録し、モデル設定を固定して
 成功率、手戻り、所要時間、介入秒数、費用を比較する。
 demoは制御されたfixtureであり、実モデル性能や本番動作の証明には使わない。
+最初の実タスクの再実行には[固定タスク](../examples/schema-export-replay.json)を使える。
+source_repoをこのcloneのrootに合わせ、比較runごとに別idへ変更する。base_refと受入条件は維持する。
+このcaseは実装初期版のテストを再現するため、最新Runtimeの回帰検証には`make verify`も併用する。
 
 ## この環境で完了した実タスク
 

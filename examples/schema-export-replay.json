@@ -1,0 +1,66 @@
+{
+  "allowed_paths": [
+    "harness/cli.py"
+  ],
+  "base_ref": "9c3afc261b8aef7ebe2b5418a0c13a1d3af3df89",
+  "checks": [
+    {
+      "argv": [
+        "python3",
+        "-m",
+        "unittest",
+        "tests.test_schema_export",
+        "-v"
+      ],
+      "id": "schema-cli",
+      "statement": "Three schemas are strict and schema export does not initialize runtime",
+      "timeout_seconds": 60
+    },
+    {
+      "argv": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-v"
+      ],
+      "id": "all-behavior",
+      "statement": "All existing harness behavior remains correct",
+      "timeout_seconds": 120
+    },
+    {
+      "argv": [
+        "/Users/shugo/.local/bin/ruff",
+        "check",
+        "harness/cli.py"
+      ],
+      "id": "lint",
+      "statement": "Changed CLI conforms to repository Python rules",
+      "timeout_seconds": 60
+    }
+  ],
+  "complexity": "specified",
+  "context_paths": [
+    "docs/design.md",
+    "AGENTS.md"
+  ],
+  "depends_on": [],
+  "effect": "local_code",
+  "goal": "Export strict task, worker report and review report JSON schemas through a read-only CLI command, without initializing runtime state.",
+  "id": "schema-export-replay",
+  "lease_seconds": 7200,
+  "lifetime_seconds": 86400,
+  "max_attempts": 3,
+  "protected_paths": [
+    "tests",
+    "AGENTS.md",
+    "Makefile",
+    "pyproject.toml"
+  ],
+  "requires_human": false,
+  "schema_version": "v1",
+  "small_attempts": 2,
+  "source_repo": "/Users/shugo/project/agent-work-harness"
+}

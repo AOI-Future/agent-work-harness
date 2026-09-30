@@ -1,0 +1,11 @@
+{
+  "task_id": "schema-export-pilot",
+  "state": "completed",
+  "attempts": 1,
+  "review_attempts": 1,
+  "elapsed_seconds": 293.958,
+  "human_interventions": 0,
+  "human_seconds": 0,
+  "reported_cost": null,
+  "actual_models": "Not recorded; existing Codex sessions were used"
+}
