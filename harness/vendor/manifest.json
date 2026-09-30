@@ -1,0 +1,10 @@
+{
+  "repository": "AOI-Future/aoi-system",
+  "commit": "79b78ff8dfe945db23dc5e51c45edd1528c66f95",
+  "files": {
+    "execution_harness/canonical.py": "6bca399f0e5e7cf9ea03cc10290592b8460b92388e8f6412e0a82350e68bce3a",
+    "execution_harness/models.py": "034ad0f405afa79f01b3c127ffcbe33dc70b16d011671cfec5fa88cfa6147f7b",
+    "execution_harness/state.py": "032371c681450643e319a95acd5c2407030d7317db6c3fbf8eadfa39301766c6",
+    "execution_harness/verify.py": "b1009e72b68d892ef36d01f34bcf39a42c407f03a08a887071a8e432849cb72f"
+  }
+}

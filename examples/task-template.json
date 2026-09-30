@@ -1,0 +1,26 @@
+{
+  "schema_version": "v1",
+  "id": "example-task",
+  "goal": "ここに具体的な修正目的と期待する挙動を書く",
+  "source_repo": "/absolute/path/to/clean/repository",
+  "base_ref": "HEAD",
+  "allowed_paths": ["src/example.py"],
+  "protected_paths": ["tests", "Makefile", "pyproject.toml", "AGENTS.md"],
+  "context_paths": [],
+  "checks": [
+    {
+      "id": "behavior",
+      "statement": "指定した利用者の操作で期待した結果になる",
+      "argv": ["python3", "-m", "unittest", "discover", "-s", "tests"],
+      "timeout_seconds": 60
+    }
+  ],
+  "depends_on": [],
+  "complexity": "specified",
+  "max_attempts": 3,
+  "small_attempts": 2,
+  "lease_seconds": 1800,
+  "lifetime_seconds": 86400,
+  "requires_human": false,
+  "effect": "local_code"
+}

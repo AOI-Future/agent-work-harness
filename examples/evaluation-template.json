@@ -1,0 +1,8 @@
+{
+  "schema_version": "v1",
+  "description": "過去の実タスクを同条件で再実行して比較する。fixture結果と分けて記録する。",
+  "cases": [],
+  "case_fields": ["task_spec_path", "source_commit", "expected_outcome", "executor_configuration"],
+  "metrics": ["completed", "attempts", "elapsed_seconds", "human_interventions", "human_seconds", "reported_cost"],
+  "cost_currency": "executorと評価実行者が同じ通貨を定義する"
+}

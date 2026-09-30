@@ -1,0 +1,21 @@
+# Agent Work Harness
+
+- 日本語で簡潔に報告する。
+- このプロジェクトは許可済みのローカル開発作業を管理する。
+- 本番、公開、課金、外部送信、認証変更は既存の承認境界を守る。
+- 作業コピー、タスク契約、証拠、状態DBはローカルに置く。
+- 入口: [README.md](README.md)。設計: [docs/design.md](docs/design.md)。
+- 実行手順: [docs/operations.md](docs/operations.md)。仕様対応: [docs/coverage.md](docs/coverage.md)。
+- 検証は `make verify`。実行例は `make demo`。
+- 変更範囲と受入条件を先に確定し、実装担当による検証規則の変更を禁止する。
+- 独立レビューは元の依頼、差分、受入条件、実行証拠から判断する。
+- 完了には自動検証と独立レビューの両方が必要。
+- 修正後は以前の合格結果を流用しない。
+- workerとreviewerの識別名はローカル協調用。認証された本人証明ではない。
+- harness側のCLI/DBを操作する担当は信頼されたcontrollerとして扱う。
+- workerにはclaim packetと専用workspaceだけを渡す。
+- executor adapterのOS/tool sandboxが権限を強制する。文章やdigestを権限と見なさない。
+- 並列作業ではコピーを分離し、共有設定の統合は順番に検証する。
+- vendorは上流の固定版。直接編集せず、変更時はpin manifestを更新し別途レビューする。
+- 検証ルール変更、state遷移、重複実行、期限切れ、復旧には意味のあるテストを追加する。
+- local stateとログ、秘密情報をGit/共有成果物へ含めない。
