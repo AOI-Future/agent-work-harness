@@ -15,9 +15,12 @@ python3 -m harness.cli --help
 
 Python 3.11+、Pydantic 2.12+、Gitが必要。開発チェックにはRuffとMypyを使う。
 この環境では既存のPython/Pydantic/Ruffを利用し、Mypyはローカル`.tools`へ配置する。
+`TYPE_PY`はキャッシュしたMypy用のPython 3.12 interpreterを指す。別環境では
+`make verify TYPE_PY=/absolute/path/to/python RUFF=/absolute/path/to/ruff`で上書きできる。
 
 タスクごと、claimごとにローカルGitコピーを作り、元リポジトリに書き込まない。
 controllerがclaim packetをworkerに渡し、返ってきたreportを受理する。
+検証はworkerのキャッシュを引き継がない専用コピーで行い、長いコマンド中はDBをロックしない。
 全受入コマンドの合格後、別セッションのreview reportで完了を判定する。
 期限切れtoken、同じ担当によるレビュー、古いrevisionの証拠は拒否する。
 

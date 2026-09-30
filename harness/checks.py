@@ -6,6 +6,7 @@ import os
 import selectors
 import signal
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -18,14 +19,17 @@ def run_check(check: Check, workspace: Path) -> dict[str, Any]:
     started = time.monotonic()
     result: dict[str, Any] = {"id": check.id, "passed": False, "reason": "execution_failed"}
     try:
-        with subprocess.Popen(
-            check.argv,
-            cwd=workspace,
-            env=environment(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        ) as child:
+        with (
+            tempfile.TemporaryDirectory(prefix="harness-clean-cache-") as cache,
+            subprocess.Popen(
+                check.argv,
+                cwd=workspace,
+                env=environment() | {"PYTHONPYCACHEPREFIX": cache, "PYTHONDONTWRITEBYTECODE": "1"},
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            ) as child,
+        ):
             assert child.stdout is not None
             selector = selectors.DefaultSelector()
             selector.register(child.stdout, selectors.EVENT_READ)

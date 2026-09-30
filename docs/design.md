@@ -1,6 +1,6 @@
 # ローカル作業ハーネス設計
 
-Status: 実装・検証中。対象はコード開発のローカルpilot。
+Status: ローカルpilot実装済み。受入検証と独立reviewの結果は[verification.md](verification.md)。
 
 ## 目的と責任
 
@@ -33,8 +33,10 @@ queued -> ready -> implementing -> verifying -> review_ready -> reviewing -> com
 - 正本sourceがdirtyなら登録を拒否。実装・reviewのコピーだけを変更する。
 - 受入条件と検証コマンドはDBに固定。sourceのprotected_pathsとcontextは変更不可。
 - 自動検証前後のrevisionが同一であること。コード変更後の証拠流用を拒否。
+- 検証はcontrollerが作るクリーンな別コピーで行い、workerのキャッシュを入力にしない。
+- 検証コマンドの実行中はDB transactionを保持しない。期限付き予約とtokenで結果を確定する。
 - revisionはGit HEADと非一時ファイル全体のSHA-256。未commit差分も含める。
-- reviewerは実装actorと別。全criterionを確認し、独自コピーを改変しない。
+- reviewerは過去の全実装actorと別。全criterionを確認し、独自コピーを改変しない。
 - 完了前に実装コピーを再照合し、上流`verify_completion`も実行する。
 - 定義済み再試行回数を超えたらescalated。specifiedはsmallからstrongへ切替。
 - 設計判断の要求、期限切れ、外部操作は人に返す。承認を実行するAPIは持たない。

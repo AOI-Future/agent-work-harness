@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import py_compile
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -15,7 +18,7 @@ from pydantic import ValidationError
 from harness.checks import run_check
 from harness.models import Check, TaskSpec
 from harness.runtime import Harness
-from harness.workspace import HarnessError, git
+from harness.workspace import HarnessError, copy_workspace, git, snapshot
 from scripts.fixture import fixture
 
 
@@ -125,6 +128,87 @@ class RuntimeTest(unittest.TestCase):
         self.verified()
         with self.assertRaises(HarnessError):
             self.claim("reviewer", "worker")
+
+    def test_every_previous_author_is_excluded_from_review(self) -> None:
+        self.verified()
+        self.review(
+            self.claim("reviewer"), verdict="changes", findings=["src/pricing.py: edge case"]
+        )
+        self.implement(self.claim(actor="worker-2"))
+        self.harness.advance(self.spec.id, {"action": "verify"})
+        with self.assertRaises(HarnessError):
+            self.claim("reviewer", "worker")
+
+    def test_forged_test_bytecode_cannot_bypass_frozen_acceptance(self) -> None:
+        packet = self.claim()
+        workspace = Path(packet["lease"]["workspace"])
+        source = workspace / "tests/test_pricing.py"
+        original = source.read_bytes()
+        timestamp = source.stat().st_mtime
+        forged = (
+            "import unittest\nclass AlwaysPass(unittest.TestCase):\n    def test_pass(self): pass\n"
+        )
+        forged += " " * (len(original) - len(forged.encode()))
+        source.write_text(forged)
+        os.utime(source, (timestamp, timestamp))
+        py_compile.compile(str(source), doraise=True)
+        source.write_bytes(original)
+        os.utime(source, (timestamp, timestamp))
+        self.harness.advance(
+            self.spec.id,
+            {"action": "report", "report": {"token": packet["lease"]["token"], "outcome": "ready"}},
+        )
+        result = self.harness.advance(self.spec.id, {"action": "verify"})
+        self.assertEqual(result["state"], "ready")
+        self.assertFalse(result["evidence_passed"])
+
+    def test_slow_verification_does_not_lock_other_tasks_or_allow_duplicate_verifier(self) -> None:
+        marker = self.root / "check-started"
+        slow = Check(
+            id="slow",
+            statement="bounded slow verification",
+            timeout_seconds=10,
+            argv=[
+                sys.executable,
+                "-c",
+                f"from pathlib import Path; import time; "
+                f"Path({str(marker)!r}).write_text('started'); time.sleep(2)",
+            ],
+        )
+        spec = self.spec.model_copy(update={"id": "slow-task", "checks": [slow]})
+        self.harness.submit(spec)
+        packet = self.harness.advance(spec.id, {"action": "claim", "role": "worker", "actor": "w"})
+        self.harness.advance(
+            spec.id,
+            {"action": "report", "report": {"token": packet["lease"]["token"], "outcome": "ready"}},
+        )
+        errors: list[BaseException] = []
+
+        def verify() -> None:
+            controller = Harness(self.root / "runtime", clock=lambda: self.now)
+            try:
+                controller.advance(spec.id, {"action": "verify"})
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                controller.close()
+
+        thread = threading.Thread(target=verify)
+        thread.start()
+        try:
+            deadline = time.monotonic() + 10
+            while not marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(marker.exists())
+            started = time.monotonic()
+            self.claim()
+            self.assertLess(time.monotonic() - started, 1.5)
+            with self.assertRaises(HarnessError):
+                self.harness.advance(spec.id, {"action": "verify"})
+        finally:
+            thread.join(timeout=10)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
 
     def test_frozen_scope_and_acceptance_tamper(self) -> None:
         packet = self.claim()
@@ -336,6 +420,27 @@ class RuntimeTest(unittest.TestCase):
 
 
 class CheckTest(unittest.TestCase):
+    def test_directory_and_file_replacement_survive_workspace_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            spec = fixture(root)
+            source = Path(spec.source_repo)
+            base = git(source, "rev-parse", "HEAD").decode().strip()
+            previous = root / "previous"
+            copy_workspace(source, base, previous, None)
+            (previous / "src/pricing.py").unlink()
+            (previous / "src").rmdir()
+            (previous / "src").write_text("directory replaced by file\n")
+            copied = root / "copied"
+            copy_workspace(source, base, copied, previous)
+            self.assertEqual(snapshot(copied), snapshot(previous))
+            (copied / "src").unlink()
+            (copied / "src/new").mkdir(parents=True)
+            (copied / "src/new/module.py").write_text("file replaced by directory\n")
+            copied_again = root / "copied-again"
+            copy_workspace(source, base, copied_again, copied)
+            self.assertEqual(snapshot(copied_again), snapshot(copied))
+
     def test_output_limit_timeout_and_environment(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             workspace = Path(temporary)

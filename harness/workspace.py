@@ -113,6 +113,15 @@ def copy_workspace(source: Path, base: str, destination: Path, previous: Path | 
         current = snapshot(destination)
         for name in current.keys() - files.keys():
             (destination / name).unlink()
+        # Remove empty directories before a directory -> file replacement.
+        for root, dirs, _ in os.walk(destination, topdown=False):
+            for name in dirs:
+                directory = Path(root) / name
+                if ".git" not in directory.relative_to(destination).parts:
+                    try:
+                        directory.rmdir()
+                    except OSError:
+                        pass
         for name in files:
             target = destination / name
             target.parent.mkdir(parents=True, exist_ok=True)

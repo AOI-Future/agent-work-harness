@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
 
-from .models import TaskSpec
+from .models import Contract, ReviewReport, TaskSpec, WorkerReport
 from .runtime import Harness
 from .workspace import HarnessError
 
@@ -26,6 +27,8 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description=__doc__)
     root.add_argument("--runtime", type=Path, default=Path.cwd() / ".runtime")
     commands = root.add_subparsers(dest="operation", required=True)
+    schema = commands.add_parser("schema", help="export a contract schema without creating state")
+    schema.add_argument("--kind", required=True, choices=["task", "worker-report", "review-report"])
     submit = commands.add_parser("submit", help="register an immutable local task")
     submit.add_argument("spec")
     for operation in ("inspect", "verify", "recover", "evidence"):
@@ -52,6 +55,14 @@ def parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = parser().parse_args()
+    if args.operation == "schema":
+        models: dict[str, type[Contract]] = {
+            "task": TaskSpec,
+            "worker-report": WorkerReport,
+            "review-report": ReviewReport,
+        }
+        print(json.dumps(models[args.kind].model_json_schema(), ensure_ascii=False, indent=2))
+        return 0
     harness: Harness | None = None
     try:
         harness = Harness(args.runtime.absolute())
@@ -88,7 +99,7 @@ def main() -> int:
     except HarnessError as exc:
         print(json.dumps({"error": "operation_rejected", "reason": str(exc)}))
         return 2
-    except (OSError, ValueError):
+    except (OSError, ValueError, sqlite3.Error):
         print(
             json.dumps({"error": "local_io_failure", "next": "inspect local paths and permissions"})
         )

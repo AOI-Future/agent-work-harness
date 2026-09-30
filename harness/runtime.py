@@ -97,6 +97,8 @@ class Harness:
                 "changed_paths": [],
                 "worker": None,
                 "last_worker_token": None,
+                "authors": [],
+                "verification_lease": None,
                 "evidence": None,
                 "human_count": 0,
                 "human_seconds": 0,
@@ -106,6 +108,8 @@ class Harness:
             return self._view(task)
 
     def advance(self, task_id: str, command: dict[str, Any]) -> dict[str, Any]:
+        if command.get("action") == "verify":
+            return self._verify_task(task_id)
         with self.store.transaction():
             task = self.store.get(task_id)
             spec = TaskSpec.model_validate(task["spec"])
@@ -126,10 +130,6 @@ class Harness:
                 else:
                     task["state"] = "verifying"
                     self._save(task, "implementation_reported", {})
-            elif action == "verify":
-                if task["state"] != "verifying":
-                    raise HarnessError("verification requires a reported implementation")
-                self._verify(task, spec)
             elif action == "review":
                 review_report = ReviewReport.model_validate(command["report"])
                 self._review(task, spec, review_report)
@@ -172,6 +172,7 @@ class Harness:
         }:
             task["state"] = "waiting_human"
             task["lease"] = None
+            task["verification_lease"] = None
             self._save(task, "waiting_human", {"reason": "task_expired"})
 
     def _dependencies_ready(self, spec: TaskSpec) -> bool:
@@ -197,8 +198,9 @@ class Harness:
             raise HarnessError("task is not claimable in this role")
         if not self._dependencies_ready(spec):
             raise HarnessError("dependency is incomplete or its evidence is stale")
-        if role == "reviewer" and actor == task["worker"]:
-            raise HarnessError("reviewer must differ from implementation actor")
+        authors = task.get("authors", [task["worker"]] if task["worker"] else [])
+        if role == "reviewer" and actor in authors:
+            raise HarnessError("reviewer must differ from every implementation actor")
         if role == "worker" and task["attempts"] >= spec.max_attempts:
             raise HarnessError("attempt budget exhausted")
         if role == "reviewer" and revision(Path(task["workspace"])) != task["verified_revision"]:
@@ -225,6 +227,8 @@ class Harness:
             "started_at": self.clock(),
         }
         task["lease"] = lease
+        if role == "worker":
+            task["authors"] = sorted(set(authors + [actor]))
         task["state"] = "implementing" if role == "worker" else "reviewing"
         task["attempts" if role == "worker" else "review_attempts"] += 1
         self._save(
@@ -269,6 +273,7 @@ class Harness:
         self, task: dict[str, Any], spec: TaskSpec, reason: str, findings: list[str] | None = None
     ) -> None:
         task["lease"] = None
+        task["verification_lease"] = None
         task["verified_revision"] = None
         task["checks"] = []
         task["evidence"] = None
@@ -287,34 +292,67 @@ class Harness:
             raise HarnessError("implementation changed files outside its frozen scope")
         return changed
 
-    def _verify(self, task: dict[str, Any], spec: TaskSpec) -> None:
-        workspace = Path(task["workspace"])
-        try:
-            task["changed_paths"] = self._scope(task, spec, workspace)
-            before = revision(workspace)
-        except HarnessError:
-            task["state"] = "waiting_human"
-            self._save(task, "waiting_human", {"reason": "scope_or_workspace_violation"})
-            return
-        results = [run_check(check, workspace) for check in spec.checks]
-        try:
-            unchanged = revision(workspace) == before
-        except HarnessError:
-            unchanged = False
-        if not unchanged:
-            self._retry(task, spec, "verification_changed_revision")
-        elif not all(result["passed"] for result in results):
-            self._retry(
-                task,
-                spec,
-                "check_failed",
-                [r["id"] + ":" + r["reason"] for r in results if not r["passed"]],
+    def _verify_task(self, task_id: str) -> dict[str, Any]:
+        # Reserve only the verifier in a short transaction; commands run without a DB lock.
+        with self.store.transaction():
+            task = self.store.get(task_id)
+            self._fresh(task)
+            spec = TaskSpec.model_validate(task["spec"])
+            if task["state"] != "verifying" or task.get("verification_lease"):
+                raise HarnessError("verification requires an unclaimed reported implementation")
+            workspace = Path(task["workspace"])
+            try:
+                task["changed_paths"] = self._scope(task, spec, workspace)
+                before = revision(workspace)
+            except HarnessError:
+                task["state"] = "waiting_human"
+                self._save(task, "waiting_human", {"reason": "scope_or_workspace_violation"})
+                return self._view(task)
+            token = "verify-" + uuid.uuid4().hex
+            deadline = min(
+                self.clock() + sum(c.timeout_seconds for c in spec.checks) + 60, task["expires_at"]
             )
-        else:
-            task["checks"] = results
-            task["verified_revision"] = before
-            task["state"] = "review_ready"
-            self._save(task, "verification_passed", {"revision": before, "checks": results})
+            task["verification_lease"] = {"token": token, "expires_at": deadline}
+            self._save(task, "verification_started", {"revision": before})
+        validation = self.store.root / "workspaces" / task_id / token
+        try:
+            # The clean controller copy excludes all worker-produced caches.
+            copy_workspace(Path(task["source"]), task["base"], validation, workspace)
+            validation_before = revision(validation)
+            same_input = snapshot(validation) == snapshot(workspace)
+            results = [run_check(check, validation) for check in spec.checks]
+            unchanged = (
+                same_input
+                and revision(workspace) == before
+                and revision(validation) == validation_before
+            )
+        except (HarnessError, OSError):
+            results = []
+            unchanged = False
+        with self.store.transaction():
+            task = self.store.get(task_id)
+            self._fresh(task)
+            reservation = task.get("verification_lease")
+            if not reservation or reservation["token"] != token or task["state"] != "verifying":
+                return self._view(task)  # Recovered/expired runs cannot publish late results.
+            task["verification_lease"] = None
+            if self.clock() >= deadline:
+                self._retry(task, spec, "verification_lease_expired")
+            elif not unchanged:
+                self._retry(task, spec, "verification_changed_revision")
+            elif not results or not all(result["passed"] for result in results):
+                self._retry(
+                    task,
+                    spec,
+                    "check_failed",
+                    [r["id"] + ":" + r["reason"] for r in results if not r["passed"]],
+                )
+            else:
+                task["checks"] = results
+                task["verified_revision"] = before
+                task["state"] = "review_ready"
+                self._save(task, "verification_passed", {"revision": before, "checks": results})
+            return self._view(task)
 
     def _review(self, task: dict[str, Any], spec: TaskSpec, report: ReviewReport) -> None:
         lease = self._lease(task, report.token, "reviewer")
@@ -353,6 +391,12 @@ class Harness:
             self._save(task, "completed", {"revision": report.revision, "reviewer": lease["actor"]})
 
     def _recover(self, task: dict[str, Any], spec: TaskSpec) -> None:
+        verification = task.get("verification_lease")
+        if verification:
+            if self.clock() < verification["expires_at"]:
+                raise HarnessError("verification lease is still active")
+            self._retry(task, spec, "verification_lease_expired")
+            return
         lease = task["lease"]
         if not lease or self.clock() < lease["expires_at"]:
             raise HarnessError("recovery requires an expired active lease")
@@ -393,7 +437,7 @@ class Harness:
             "next": {
                 "ready": "claim worker",
                 "implementing": "await worker report",
-                "verifying": "verify",
+                "verifying": "await verifier" if task.get("verification_lease") else "verify",
                 "review_ready": "claim independent reviewer",
                 "reviewing": "await review report",
                 "completed": "inspect local patch",
