@@ -26,7 +26,7 @@ dsh の `acp` / `headless` profile を将来そのまま第2の実行体とし�
 - [x] `scripts/executor_pi.py`: worker / reviewer / loop の3モード
 - [x] モデル不要の stub backend で E2E test（`tests/test_executor.py`）
 - [ ] 実 pi セッションでの1件目 E2E（有料。人間のGO待ち）
-- [ ] 運用手順の追記: [operations.md](operations.md)
+- [x] 運用手順の追記: [operations.md](operations.md)
 
 ## B'. 評価データ収集
 

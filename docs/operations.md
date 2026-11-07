@@ -41,6 +41,22 @@ python3 -m harness.cli inspect example-task
 python3 -m harness.cli evidence example-task
 ```
 
+## 実行体アダプタ（piセッションをworker/reviewerにする）
+
+手動のclaim→report手順を、薄いアダプタで自動化できる。仕様は[executor seam](executor-seam.md)。
+アダプタはコントローラCLIしか使わず、合否はコントローラの検証と独立レビューのみが判定する。
+
+```bash
+python3 -m scripts.executor_pi --runtime <runtime> --task <id> --mode loop \
+  --worker-actor pi-worker --reviewer-actor pi-reviewer [--model <pattern>]
+```
+
+`--mode loop`はready→worker→verify→review_ready→reviewer→completedまで直列に駆動する。
+単発は`--mode worker|reviewer`。`--backend-cmd <argv>`で任意の決定論的backend（テスト・スタブ用）に
+差し替えられる。backend失败やtimeoutは`needs_decision`として人に返る。verdict JSONが
+解析不能な場合はレビューを提出せず、lease期限から`recover`で回収する。
+tier→モデルの対応は実行体側の設定が持つ。アダプタは`--model`で明示的に上書きするだけ。
+
 ## 停止・復旧・介入
 
 lease期限後は`recover`を実行する。古いtokenは拒否され、古い作業コピーは引き継がれない。
