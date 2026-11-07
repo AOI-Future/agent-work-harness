@@ -13,6 +13,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -29,14 +30,17 @@ def worker_prompt(packet: dict[str, Any]) -> str:
     criteria = "\n".join(f"- {c['id']}: {c['statement']}" for c in packet["criteria"])
     allowed = ", ".join(packet["allowed_paths"])
     protected = ", ".join(packet["protected_paths"])
+    failures = json.dumps(packet["failures"], ensure_ascii=False)
     return (
         f"あなたはタスク {packet['task_id']} 専用のワーカーセッションです。\n"
         f"目的: {packet['goal']}\n"
         f"編集可能なパス: {allowed}\n"
         f"保護パス（変更禁止）: {protected}\n"
         f"受入基準:\n{criteria}\n"
+        f"過去の失敗（修正ラウンドではこれを必ず踏襲）: {failures}\n"
         f"禁止行動: {', '.join(packet['forbidden_actions'])}\n"
         "現在の作業コピー内のファイルだけを変更してください。"
+        "行頭を NEEDS_DECISION にした行を出力した場合は判断要求として扱う。"
         "基準を満たせないと判断した場合は NEEDS_DECISION と出力して停止し、"
         "それ以外は実装を完了して停止してください。"
     )
@@ -93,6 +97,8 @@ def pi_backend(role: str, model: str | None) -> Backend:
             )
         except subprocess.TimeoutExpired as exc:
             raise ExecutorError("backend session exceeded its timeout") from exc
+        except OSError as exc:
+            raise ExecutorError(f"backend session could not start: {exc}") from exc
         if result.returncode != 0:
             raise ExecutorError(f"backend session exited {result.returncode}")
         return result.stdout
@@ -115,6 +121,8 @@ def cmd_backend(argv: list[str]) -> Backend:
             )
         except subprocess.TimeoutExpired as exc:
             raise ExecutorError("backend command exceeded its timeout") from exc
+        except OSError as exc:
+            raise ExecutorError(f"backend command could not start: {exc}") from exc
         if result.returncode != 0:
             raise ExecutorError(f"backend command exited {result.returncode}")
         return result.stdout
@@ -136,9 +144,14 @@ def cli_control(runtime: Path, python: str = sys.executable) -> Control:
                 args["actor"],
             ]
         elif operation in {"report", "review"}:
-            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
-                json.dump(args["report"], handle)
-                report_path = handle.name
+            try:
+                with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+                    json.dump(args["report"], handle)
+                    report_path = handle.name
+            except (OSError, TypeError, ValueError) as exc:
+                if report_path is not None:
+                    Path(report_path).unlink(missing_ok=True)
+                raise ExecutorError(f"report could not be serialized: {exc}") from exc
             argv += [operation, args["task"], report_path]
         elif operation == "verify":
             argv += ["verify", args["task"]]
@@ -147,7 +160,10 @@ def cli_control(runtime: Path, python: str = sys.executable) -> Control:
         else:
             raise ExecutorError("adapter may not issue this controller operation")
         try:
-            result = subprocess.run(argv, capture_output=True, text=True, timeout=3600, check=False)
+            # verify can legitimately run every pinned check plus copy time; keep a wide cap.
+            result = subprocess.run(argv, capture_output=True, text=True, timeout=7200, check=False)
+        except subprocess.TimeoutExpired as exc:
+            raise ExecutorError("controller call exceeded its wall timeout") from exc
         finally:
             if report_path is not None:
                 Path(report_path).unlink(missing_ok=True)
@@ -159,10 +175,19 @@ def cli_control(runtime: Path, python: str = sys.executable) -> Control:
             raise ExecutorError("controller returned a non-object payload")
         payload = cast("dict[str, Any]", parsed)
         if result.returncode != 0:
-            raise ExecutorError(f"controller rejected: {payload.get('reason', 'unknown')}")
+            raise ExecutorError(
+                "controller rejected: "
+                f"{payload.get('reason', 'unknown')}; next: {payload.get('next', 'unknown')}"
+            )
         return payload
 
     return run
+
+
+def lease_capped_timeout(packet: dict[str, Any], timeout: float) -> float:
+    """Never let a backend outlive its lease minus a submission margin."""
+    remaining = float(packet["lease"]["expires_at"]) - time.time() - 30.0
+    return max(1.0, min(timeout, remaining))
 
 
 def run_worker(
@@ -170,9 +195,11 @@ def run_worker(
 ) -> dict[str, Any]:
     packet = control("claim", {"task": task_id, "role": "worker", "actor": actor})
     workspace = Path(packet["lease"]["workspace"])
+    timeout = lease_capped_timeout(packet, timeout)
     try:
-        backend(worker_prompt(packet), packet, workspace, timeout)
-        outcome: str = "ready"
+        stdout = backend(worker_prompt(packet), packet, workspace, timeout)
+        refusal = any(line.strip().startswith("NEEDS_DECISION") for line in stdout.splitlines())
+        outcome: str = "needs_decision" if refusal else "ready"
     except ExecutorError:
         outcome = "needs_decision"
     report = {"token": packet["lease"]["token"], "outcome": outcome}
@@ -184,6 +211,7 @@ def run_reviewer(
 ) -> dict[str, Any]:
     packet = control("claim", {"task": task_id, "role": "reviewer", "actor": actor})
     workspace = Path(packet["lease"]["workspace"])
+    timeout = lease_capped_timeout(packet, timeout)
     verdict = parse_verdict(backend(reviewer_prompt(packet), packet, workspace, timeout))
     return control(
         "review",
@@ -194,7 +222,10 @@ def run_reviewer(
                 "revision": packet["target_revision"],
                 "verdict": verdict["verdict"],
                 "covered_criteria": verdict["covered_criteria"],
-                "findings": verdict.get("findings", []),
+                "findings": [
+                    f if isinstance(f, str) else json.dumps(f, ensure_ascii=False)
+                    for f in verdict.get("findings", [])
+                ],
             },
         },
     )
@@ -209,7 +240,9 @@ def run_loop(
     reviewer_backend: Backend,
     timeout: float,
 ) -> dict[str, Any]:
-    for _ in range(20):
+    # Each fix cycle spends ~5 iterations (inspect/worker/inspect/verify/review-inspect);
+    # the controller escalates on its own attempt budgets long before this bound.
+    for _ in range(60):
         state = str(control("inspect", {"task": task_id})["state"])
         if state == "ready":
             run_worker(control, task_id, worker_actor, worker_backend, timeout)
@@ -235,6 +268,8 @@ def main() -> int:
     root.add_argument("--timeout", type=float, default=1500.0)
     root.add_argument(
         "--backend-cmd",
+        nargs="+",
+        metavar="ARGV",
         help="deterministic argv backend (stdin: prompt+task_id JSON); for tests and stubs",
     )
     args = root.parse_args()
