@@ -62,3 +62,26 @@ completed から元リポジトリ反映までの人手パッチ手渡しを、�
 - security audit の実施情報
 - ACP profile の安定性（session format migrations の落ち着き）
 - 我々の seam を通した B' 実測で、同一契約での勝敗データが揃った時点
+
+---
+
+## 追記 2026-11-08（first real E2E の ledger 確定と drift 教訓）
+
+### 判明: 手作業統合は証跡チェーンを切る（C' 自動化の動機が実証された）
+- r2 は `completed`（reviewed revision `08006e19…`）に到達したが、人手の Cons①②③
+  裁定後の cp→push で作業ツリーが `1b3dcf6e…` にドリフト。
+- ハーネスは `completed_revision_changed` を検知し `waiting_human` に降格・証跡を null 化。
+  **設計どおり**。review 済みバイト ≠ shipping 済みバイト（`896f301`）を正直に反映。
+- 結論: 統合は必ず `integration-patch`（レビュー時リビジョンを再現する使い捨てクローン）
+  経由で行い、手作業 cp は使わない。これが C' 自動化を必須とする実証根拠。
+
+### human_close で ledger を正直に確定（escดาลated / waiting_human → closed）
+- r1: `closed`（reason: check argv が unittest を指していた、target は pytest 式、escダルートは妥当）
+- r2: `closed` + `external_revision: 896f301`。`evidence_passed: False` を**消さずに保持**
+  （=pipeline 外 shipping を正直に記録）。 whitewash しないのが要点。
+- コミット `2d19da1` feat: human_close（CLI `close <task> --reason [--external-sha]`）。
+
+### 教訓の反映先
+- check preflight（intake 必須）: r1 失敗の根拠。`eval_report.py` 実装時に intake へ組み込む。
+- 統合は seam 経由: 次の E2E（r3）は `integration-patch → mark-integrated` を自動で通し、
+  途切れない証跡チェーンを証拠として残す。
