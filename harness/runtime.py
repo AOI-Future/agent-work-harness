@@ -10,9 +10,11 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from . import machine
 from .checks import run_check
 from .models import ReviewReport, TaskSpec, WorkerReport
 from .protocol import completion_evidence
@@ -30,9 +32,46 @@ from .workspace import (
 
 
 class Harness:
-    def __init__(self, root: Path, clock: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self,
+        root: Path,
+        clock: Callable[[], float] = time.time,
+        check_concurrency: int | None = None,
+    ) -> None:
         self.store = Store(root)
         self.clock = clock
+        # Independent checks run concurrently, capped by the machine profile
+        # (Apple Silicon performance cores); exclusive checks stay serial.
+        cap = machine.profile()["check_concurrency"]
+        self.check_concurrency = max(1, min(cap, check_concurrency or cap))
+
+    def _run_checks(
+        self, checks: list[Any], workspace: Path, capture_tail: int = 0
+    ) -> list[dict[str, Any]]:
+        def invoke(check: Any) -> dict[str, Any]:
+            # Pass capture_tail only when requested so plain run_check
+            # signatures (and their test doubles) stay valid on the verify path.
+            if capture_tail:
+                return run_check(check, workspace, capture_tail=capture_tail)
+            return run_check(check, workspace)
+
+        results: dict[str, dict[str, Any]] = {}
+        shared = [check for check in checks if not check.exclusive]
+        serial = [check for check in checks if check.exclusive]
+        for check in serial:
+            results[check.id] = invoke(check)
+        if shared:
+            if len(shared) == 1 or self.check_concurrency == 1:
+                for check in shared:
+                    results[check.id] = invoke(check)
+            else:
+                workers = min(self.check_concurrency, len(shared))
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    futures = {pool.submit(invoke, check): check.id for check in shared}
+                    for future in futures:
+                        results[futures[future]] = future.result()
+        # Deterministic order: exactly the spec's check order.
+        return [results[check.id] for check in checks]
 
     def close(self) -> None:
         self.store.connection.close()
@@ -106,8 +145,8 @@ class Harness:
                     with tempfile.TemporaryDirectory(prefix="harness-preflight-") as scratch:
                         scratch_path = Path(scratch)
                         copy_workspace(source, base, scratch_path, None)
-                        for check in spec.checks:
-                            outcome = run_check(check, scratch_path, capture_tail=4096)
+                        outcomes = self._run_checks(spec.checks, scratch_path, capture_tail=4096)
+                        for check, outcome in zip(spec.checks, outcomes, strict=True):
                             entry = {
                                 "id": check.id,
                                 "passed": outcome["passed"],
@@ -383,7 +422,7 @@ class Harness:
             copy_workspace(Path(task["source"]), task["base"], validation, workspace)
             validation_before = revision(validation)
             same_input = snapshot(validation) == snapshot(workspace)
-            results = [run_check(check, validation) for check in spec.checks]
+            results = self._run_checks(spec.checks, validation)
             unchanged = (
                 same_input
                 and revision(workspace) == before

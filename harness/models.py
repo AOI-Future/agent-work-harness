@@ -36,6 +36,7 @@ class Check(Contract):
     statement: Annotated[str, Field(min_length=1, max_length=4000)]
     argv: Annotated[list[str], Field(min_length=1, max_length=40)]
     timeout_seconds: Annotated[int, Field(ge=1, le=600)] = 60
+    exclusive: bool = False
 
     @field_validator("argv")
     @classmethod

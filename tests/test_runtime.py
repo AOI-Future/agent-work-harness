@@ -669,3 +669,35 @@ class CheckTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CheckConcurrencyTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name).resolve()
+        self.harness = Harness(self.root / "runtime", check_concurrency=2)
+
+    def tearDown(self) -> None:
+        self.harness.close()
+        self.temporary.cleanup()
+
+    def test_independent_checks_overlap_exclusive_stays_serial(self) -> None:
+        checks = [
+            Check(id="slow-a", statement="one second", argv=["sleep", "1"]),
+            Check(id="slow-b", statement="one second", argv=["sleep", "1"]),
+        ]
+        started = time.monotonic()
+        results = self.harness._run_checks(checks, self.root)
+        elapsed = time.monotonic() - started
+        assert all(r["passed"] for r in results)
+        assert [r["id"] for r in results] == ["slow-a", "slow-b"]  # spec order
+        assert elapsed < 1.9  # overlapped, not summed
+        exclusive = [
+            Check(id="slow-a", statement="one second", argv=["sleep", "1"], exclusive=True),
+            Check(id="slow-b", statement="one second", argv=["sleep", "1"], exclusive=True),
+        ]
+        started = time.monotonic()
+        results = self.harness._run_checks(exclusive, self.root)
+        elapsed = time.monotonic() - started
+        assert all(r["passed"] for r in results)
+        assert elapsed >= 1.9  # exclusive checks serialize

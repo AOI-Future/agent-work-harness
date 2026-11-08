@@ -1,4 +1,4 @@
-PY ?= python3
+PY ?= .venv/bin/python
 RUFF ?= /Users/shugo/.local/bin/ruff
 TYPE_PY ?= /Users/shugo/project/aoi-system-role-persistence-rebuild/.venv/bin/python
 
@@ -26,3 +26,7 @@ ci: verify replay
 
 help:
 	$(PY) -m harness.cli --help
+
+.venv/bin/python:
+	python3 -m venv .venv
+	./.venv/bin/python -m pip install -q pydantic pytest
