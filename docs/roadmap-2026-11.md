@@ -25,7 +25,9 @@ dsh の `acp` / `headless` profile を将来そのまま第2の実行体とし�
 - [x] seam 仕様確定: [executor-seam.md](executor-seam.md)
 - [x] `scripts/executor_pi.py`: worker / reviewer / loop の3モード
 - [x] モデル不要の stub backend で E2E test（`tests/test_executor.py`）
-- [ ] 実 pi セッションでの1件目 E2E（有料。人間のGO待ち）
+- [x] 実 pi セッションでの E2E: r2（verified・1試行）→ r3b（無傷チェーンで integrated
+      `77a40d9`）。地は local oMLX（Qwen3.8-Flash-Next）で非課金。cloud 課金版との
+      比較は評価アーム整備時に実施）
 - [x] 運用手順の追記: [operations.md](operations.md)
 
 ## B'. 評価データ収集
