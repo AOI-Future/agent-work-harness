@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import py_compile
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -178,7 +179,9 @@ class RuntimeTest(unittest.TestCase):
             ],
         )
         spec = self.spec.model_copy(update={"id": "slow-task", "checks": [slow]})
-        self.harness.submit(spec)
+        # This test isolates verification-time leasing; submit preflight would
+        # run the same slow check and consume its marker early.
+        self.harness.submit(spec, preflight="skip")
         packet = self.harness.advance(spec.id, {"action": "claim", "role": "worker", "actor": "w"})
         self.harness.advance(
             spec.id,
@@ -522,6 +525,82 @@ class RuntimeTest(unittest.TestCase):
         self.harness.mark_integrated(self.spec.id, "0123456")
         self.now += 999999
         self.assertEqual(self.harness.inspect(self.spec.id)["state"], "integrated")
+
+    def test_events_journal_is_append_only(self) -> None:
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.harness.store.connection.execute("UPDATE events SET kind='x' WHERE seq=1")
+        self.harness.store.connection.rollback()
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.harness.store.connection.execute("DELETE FROM events WHERE seq=1")
+        self.harness.store.connection.rollback()
+        self.assertEqual(len(self.harness.store.events(self.spec.id)), 1)
+
+    def test_replay_returns_ordered_parsed_journal(self) -> None:
+        self.verified()
+        journal = self.harness.store.replay(self.spec.id)
+        self.assertEqual([event["kind"] for event in journal][:2], ["submitted", "claimed"])
+        self.assertTrue(all(isinstance(event["data"], dict) for event in journal))
+        self.assertEqual(
+            [event["seq"] for event in journal], sorted(event["seq"] for event in journal)
+        )
+
+    def test_enforce_rejects_a_red_baseline_before_it_reaches_the_queue(self) -> None:
+        # The fixture repo is deliberately broken, so its baseline is red.
+        with self.assertRaises(HarnessError):
+            self.harness.submit(
+                self.spec.model_copy(update={"id": "enforce-red"}), preflight="enforce"
+            )
+        self.assertFalse(self.harness.store.exists("enforce-red"))
+
+    def test_record_mode_admits_and_journals_a_red_baseline(self) -> None:
+        view = self.harness.submit(
+            self.spec.model_copy(
+                update={
+                    "id": "record-red",
+                    "checks": [
+                        Check(
+                            id="failing",
+                            statement="intentionally red",
+                            argv=[sys.executable, "-c", "raise SystemExit(1)"],
+                        )
+                    ],
+                }
+            ),
+            preflight="record",
+        )
+        self.assertEqual(view["state"], "ready")
+        journal = self.harness.store.replay("record-red")
+        preflight = next(e["data"]["preflight"] for e in journal if "preflight" in e["data"])
+        self.assertEqual(preflight["mode"], "record")
+        self.assertFalse(preflight["results"][0]["passed"])
+
+    def test_enforce_admits_a_green_baseline(self) -> None:
+        view = self.harness.submit(
+            self.spec.model_copy(
+                update={
+                    "id": "enforce-green",
+                    "checks": [
+                        Check(
+                            id="prints",
+                            statement="prints a marker",
+                            argv=[sys.executable, "-c", "print('PREFLIGHT-MARKER')"],
+                        )
+                    ],
+                }
+            ),
+            preflight="enforce",
+        )
+        self.assertEqual(view["state"], "ready")
+        journal = self.harness.store.replay("enforce-green")
+        preflight = next(e["data"]["preflight"] for e in journal if "preflight" in e["data"])
+        self.assertTrue(preflight["results"][0]["passed"])
+        self.assertIn("PREFLIGHT-MARKER", preflight["results"][0]["tail"])
+
+    def test_preflight_mode_is_validated(self) -> None:
+        with self.assertRaises(HarnessError):
+            self.harness.submit(
+                self.spec.model_copy(update={"id": "bogus-mode"}), preflight="maybe"
+            )
 
 
 class CheckTest(unittest.TestCase):

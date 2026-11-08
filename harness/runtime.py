@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
+import tempfile
 import time
 import uuid
 from collections.abc import Callable
@@ -38,9 +40,28 @@ class Harness:
     def _save(self, task: dict[str, Any], kind: str, details: dict[str, Any]) -> None:
         notify = kind in {"completed", "waiting_human", "escalated"}
         self.store.put(task)
-        self.store.event(task["spec"]["id"], self.clock(), kind, details, notify)
+        self.store.event(
+            task["spec"]["id"], self.clock(), kind, {"state": task["state"], **details}, notify
+        )
 
-    def submit(self, spec: TaskSpec) -> dict[str, Any]:
+    def submit(
+        self,
+        spec: TaskSpec,
+        *,
+        preflight: str = "record",
+    ) -> dict[str, Any]:
+        """Register an immutable task contract.
+
+        ``preflight`` runs every acceptance check against a disposable copy of
+        the pristine base *before* the task becomes claimable:
+        - ``record``  (default): run and journal the outcome; never reject.
+          Red baselines are legitimate for make-the-test-pass contracts.
+        - ``enforce``: reject the submission if any check fails, refusing to
+          bill a worker on an unvalidated check argv (the r1 lesson).
+        - ``skip``: do not run; journaled honestly as skipped.
+        """
+        if preflight not in {"record", "enforce", "skip"}:
+            raise HarnessError("preflight must be record, enforce, or skip")
         canonical = spec.model_dump(mode="json")
         digest = hashlib.sha256(json.dumps(canonical, sort_keys=True).encode()).hexdigest()
         with self.store.transaction():
@@ -79,6 +100,32 @@ class Harness:
                 for root in protected
             ):
                 raise HarnessError("allowed and protected paths may not overlap")
+            preflight_results: list[dict[str, Any]] = []
+            if preflight != "skip":
+                try:
+                    with tempfile.TemporaryDirectory(prefix="harness-preflight-") as scratch:
+                        scratch_path = Path(scratch)
+                        copy_workspace(source, base, scratch_path, None)
+                        for check in spec.checks:
+                            outcome = run_check(check, scratch_path, capture_tail=4096)
+                            entry = {
+                                "id": check.id,
+                                "passed": outcome["passed"],
+                                "reason": outcome["reason"],
+                                "returncode": outcome["returncode"],
+                                "tail": outcome.get("tail", ""),
+                            }
+                            preflight_results.append(entry)
+                            if not outcome["passed"] and preflight == "enforce":
+                                raise HarnessError(
+                                    f"check preflight failed on baseline: {check.id} "
+                                    f"rc={outcome['returncode']} ({outcome['reason']}); "
+                                    "fix the check argv, or submit with record mode "
+                                    "explicitly if a red baseline is intended"
+                                )
+                except BaseException:
+                    shutil.rmtree(baseline_root, ignore_errors=True)
+                    raise
             task = {
                 "spec": canonical,
                 "spec_digest": digest,
@@ -108,7 +155,16 @@ class Harness:
                 "external_revision": None,
                 "integrated_at": None,
             }
-            self._save(task, task["state"] if spec.requires_human else "submitted", {})
+            self._save(
+                task,
+                task["state"] if spec.requires_human else "submitted",
+                {
+                    "preflight": {
+                        "mode": preflight,
+                        "results": preflight_results,
+                    }
+                },
+            )
             return self._view(task)
 
     def advance(self, task_id: str, command: dict[str, Any]) -> dict[str, Any]:

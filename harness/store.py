@@ -34,6 +34,18 @@ class Store:
                 at REAL NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL,
                 notify INTEGER NOT NULL DEFAULT 0
             );
+            /* The event journal is append-only evidence: durable, replayable,
+               and tamper-evident. Updates and deletes abort. */
+            CREATE TRIGGER IF NOT EXISTS events_append_only_update
+            BEFORE UPDATE ON events
+            BEGIN
+                SELECT RAISE(ABORT, 'events journal is append-only');
+            END;
+            CREATE TRIGGER IF NOT EXISTS events_append_only_delete
+            BEFORE DELETE ON events
+            BEGIN
+                SELECT RAISE(ABORT, 'events journal is append-only');
+            END;
         """)
 
     @contextmanager
@@ -74,6 +86,27 @@ class Store:
             "INSERT INTO events(task_id,at,kind,data,notify) VALUES(?,?,?,?,?)",
             (task_id, at, kind, json.dumps(data, sort_keys=True), int(notify)),
         )
+
+    def replay(self, task_id: str) -> list[dict[str, Any]]:
+        """Replay the full durable audit narrative of a task, in journal order.
+
+        The data column is written only by ``event()`` as canonical JSON; a row
+        that fails to parse is evidence of database tampering or corruption, so
+        it must abort loudly and name the offending sequence.
+        """
+        rows = self.connection.execute(
+            "SELECT seq, at, kind, data FROM events WHERE task_id=? ORDER BY seq", (task_id,)
+        )
+        replayed: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                payload = json.loads(row["data"])
+            except ValueError as exc:
+                raise HarnessError(
+                    f"event journal corrupt: seq {row['seq']} is not valid JSON"
+                ) from exc
+            replayed.append(dict(row) | {"data": payload})
+        return replayed
 
     def events(
         self, task_id: str, *, notifications: bool = False, after: int = 0

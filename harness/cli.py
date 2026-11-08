@@ -31,6 +31,14 @@ def parser() -> argparse.ArgumentParser:
     schema.add_argument("--kind", required=True, choices=["task", "worker-report", "review-report"])
     submit = commands.add_parser("submit", help="register an immutable local task")
     submit.add_argument("spec")
+    submit.add_argument(
+        "--preflight",
+        choices=["enforce", "record", "skip"],
+        default="enforce",
+        help="run acceptance checks against the pristine baseline before the task "
+        "becomes claimable; enforce (default) rejects a red baseline so an "
+        "unvalidated check argv never bills a worker",
+    )
     for operation in ("inspect", "verify", "recover", "evidence"):
         commands.add_parser(operation).add_argument("task")
     claim = commands.add_parser("claim", help="controller assigns a dedicated workspace")
@@ -45,6 +53,9 @@ def parser() -> argparse.ArgumentParser:
         events = commands.add_parser(operation)
         events.add_argument("task")
         events.add_argument("--after", type=int, default=0)
+    commands.add_parser(
+        "replay", help="replay the full append-only audit journal for a task"
+    ).add_argument("task")
     intervention = commands.add_parser("intervention")
     intervention.add_argument("task")
     intervention.add_argument("--seconds", type=float, required=True)
@@ -84,7 +95,9 @@ def main() -> int:
         harness = Harness(args.runtime.absolute())
         operation = args.operation
         if operation == "submit":
-            result: Any = harness.submit(TaskSpec.model_validate(read_json(args.spec)))
+            result: Any = harness.submit(
+                TaskSpec.model_validate(read_json(args.spec)), preflight=args.preflight
+            )
         elif operation == "inspect":
             result = harness.inspect(args.task)
         elif operation == "list":
@@ -93,6 +106,8 @@ def main() -> int:
             result = harness.store.events(
                 args.task, notifications=operation == "notifications", after=args.after
             )
+        elif operation == "replay":
+            result = harness.store.replay(args.task)
         elif operation == "evidence":
             view = harness.inspect(args.task)
             if view["state"] != "completed":

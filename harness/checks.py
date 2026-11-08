@@ -15,9 +15,10 @@ from .models import Check
 from .workspace import environment
 
 
-def run_check(check: Check, workspace: Path) -> dict[str, Any]:
+def run_check(check: Check, workspace: Path, capture_tail: int = 0) -> dict[str, Any]:
     started = time.monotonic()
     result: dict[str, Any] = {"id": check.id, "passed": False, "reason": "execution_failed"}
+    tail = bytearray()
     try:
         with (
             tempfile.TemporaryDirectory(prefix="harness-clean-cache-") as cache,
@@ -46,6 +47,10 @@ def run_check(check: Check, workspace: Path) -> dict[str, Any]:
                         if not data:
                             selector.unregister(key.fileobj)
                         size += len(data)
+                        if capture_tail:
+                            tail += data
+                            if len(tail) > capture_tail:
+                                del tail[: len(tail) - capture_tail]
                         if size > 1024 * 1024:
                             reason = "output_limit"
                             break
@@ -75,4 +80,6 @@ def run_check(check: Check, workspace: Path) -> dict[str, Any]:
     except OSError:
         result["reason"] = "command_unavailable"
     result["seconds"] = round(time.monotonic() - started, 4)
+    if capture_tail:
+        result["tail"] = tail.decode("utf-8", "replace")
     return result
