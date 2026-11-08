@@ -32,7 +32,13 @@ dsh の `acp` / `headless` profile を将来そのまま第2の実行体とし�
 
 観測が1件（schema-export-pilot）しか無い現状を脱する。
 
-- [ ] 実バックログ → TaskSpec インテーク手順の確定（難易度・tier を登録時固定）
+- [x] 実バックログ → TaskSpec インテーク手順の確定（難易度・tier を登録時固定）
+- [ ] **submit 前の check preflight（必須化）**: submit 時に check argv を
+      baseline workspace で dry-run し、`rc=0` と「テスト収集数が 0 でないこと」を
+      確認する。未実装のまま進めた結果、`webhook-json-output` 第1回実行で
+      `unittest discover` が pytest 風テストを 0 件収集（rc=5）し、wーカーが3試行
+      無駄になった。check 自体が未検証であることが失敗の主因。
+      `webhook-json-output-r2` で check 修正後、1試行で verified・9.3 分。
 - [ ] `scripts/eval_report.py`: tier 別 attempt 数・修正回数・所要時間・費用の
       比較レポート生成（未報告費用をゼロにしない既存方針を維持）
 - [ ] 固定リプレイスイート拡充: `examples/schema-export-replay.json` に続き5〜10件
