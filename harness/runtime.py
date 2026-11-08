@@ -175,6 +175,7 @@ class Harness:
             "escalated",
             "integrate_ready",
             "integrated",
+            "closed",
         }:
             task["state"] = "waiting_human"
             task["lease"] = None
@@ -434,6 +435,7 @@ class Harness:
             "failures": task["failures"],
             "evidence_passed": bool(task["evidence"]),
             "patch": task.get("patch"),
+            "closed_reason": task.get("closed_reason"),
             "external_revision": task.get("external_revision"),
             "human_interventions": task["human_count"],
             "human_seconds": task["human_seconds"],
@@ -453,6 +455,7 @@ class Harness:
                 "integrated": "contract closed at an external revision",
                 "waiting_human": "human decision required; execution stopped",
                 "escalated": "budget exhausted; human decision required",
+                "closed": "terminal; closed by human decision",
             }[state],
         }
 
@@ -460,6 +463,30 @@ class Harness:
         with self.store.transaction():
             task = self.store.get(task_id)
             self._fresh(task)
+            return self._view(task)
+
+    def human_close(
+        self,
+        task_id: str,
+        reason: str,
+        external_revision: str | None = None,
+    ) -> dict[str, Any]:
+        # Terminal human decision for gated tasks settled outside the pipeline
+        # (shipped, abandoned, or superseded). Never touches active leases.
+        if not reason or len(reason) > 500:
+            raise HarnessError("close reason is required and must be at most 500 characters")
+        if external_revision is not None and not re.fullmatch(r"[0-9a-f]{7,40}", external_revision):
+            raise HarnessError("external revision must be a lowercase git sha (7-40 hex)")
+        with self.store.transaction():
+            task = self.store.get(task_id)
+            self._fresh(task)
+            if task["state"] not in {"waiting_human", "escalated", "completed", "integrate_ready"}:
+                raise HarnessError("only gated or finished tasks may be closed")
+            task["state"] = "closed"
+            task["closed_reason"] = reason
+            if external_revision:
+                task["external_revision"] = external_revision
+            self._save(task, "closed", {"reason": reason, "external_revision": external_revision})
             return self._view(task)
 
     def integration_patch(self, task_id: str) -> dict[str, Any]:

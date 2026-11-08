@@ -487,6 +487,32 @@ class RuntimeTest(unittest.TestCase):
             self.harness.mark_integrated(self.spec.id, "0123456")
         self.assertEqual(self.harness.inspect(self.spec.id)["state"], "integrate_ready")
 
+    def test_human_close_is_terminal_and_expiry_exempt(self) -> None:
+        for _ in range(3):  # escalate: the pipeline can no longer settle it
+            self.implement(self.claim(), good=False)
+            self.harness.advance(self.spec.id, {"action": "verify"})
+        view = self.harness.human_close(
+            self.spec.id,
+            "shipped manually as a review follow-up",
+            external_revision="abc1234",
+        )
+        self.assertEqual(view["state"], "closed")
+        self.assertEqual(view["external_revision"], "abc1234")
+        self.assertIn("manually", view["closed_reason"])
+        with self.assertRaises(HarnessError):  # terminal: no lease may reopen
+            self.claim()
+        self.now += 999_999  # expiry must not resurrect a closed task
+        self.assertEqual(self.harness.inspect(self.spec.id)["state"], "closed")
+
+    def test_human_close_rejects_bad_input_and_active_state(self) -> None:
+        with self.assertRaises(HarnessError):  # reason required
+            self.harness.human_close(self.spec.id, "", external_revision="abc1234")
+        with self.assertRaises(HarnessError):  # sha must be lowercase hex
+            self.harness.human_close(self.spec.id, "ok", external_revision="XYZ")
+        self.claim()  # an open worker lease is not a gated state
+        with self.assertRaises(HarnessError):
+            self.harness.human_close(self.spec.id, "ok", external_revision="abc1234")
+
     def test_integration_states_do_not_expire(self) -> None:
         self.verified()
         self.review(self.claim("reviewer"))

@@ -59,6 +59,12 @@ def parser() -> argparse.ArgumentParser:
     )
     integrated.add_argument("task")
     integrated.add_argument("external_revision")
+    close = commands.add_parser(
+        "close", help="human terminal decision settling a gated task outside the pipeline"
+    )
+    close.add_argument("task")
+    close.add_argument("--reason", required=True)
+    close.add_argument("--external-sha")
     commands.add_parser("list")
     return root
 
@@ -96,6 +102,8 @@ def main() -> int:
             result = harness.integration_patch(args.task)
         elif operation == "mark-integrated":
             result = harness.mark_integrated(args.task, args.external_revision)
+        elif operation == "close":
+            result = harness.human_close(args.task, args.reason, args.external_sha)
         else:
             command: dict[str, Any] = {"action": operation}
             if operation == "claim":

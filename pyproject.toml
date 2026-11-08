@@ -32,3 +32,11 @@ follow_imports = "silent"
 [[tool.mypy.overrides]]
 module = ["harness.vendor.*"]
 ignore_errors = true
+
+# pydantic is a hard dependency with shipped stubs; checkers that resolve it
+# (the authoritative uv-venv gate) keep full stub typing, and this override is
+# inert there. It only silences the false "import-not-found" from isolated
+# checkers that cannot see site-packages (e.g. the pi-lens bundled mypy).
+[[tool.mypy.overrides]]
+module = ["pydantic", "pydantic.*"]
+ignore_missing_imports = true
