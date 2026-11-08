@@ -437,6 +437,7 @@ class Harness:
             "patch": task.get("patch"),
             "closed_reason": task.get("closed_reason"),
             "external_revision": task.get("external_revision"),
+            "integrated_at": task.get("integrated_at"),
             "human_interventions": task["human_count"],
             "human_seconds": task["human_seconds"],
             "reported_cost": task["reported_cost"],

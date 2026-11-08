@@ -33,12 +33,15 @@ dsh の `acp` / `headless` profile を将来そのまま第2の実行体とし�
 観測が1件（schema-export-pilot）しか無い現状を脱する。
 
 - [x] 実バックログ → TaskSpec インテーク手順の確定（難易度・tier を登録時固定）
-- [ ] **submit 前の check preflight（必須化）**: submit 時に check argv を
+- [x] **submit 前の check preflight（必須化）**: submit 時に check argv を
       baseline workspace で dry-run し、`rc=0` と「テスト収集数が 0 でないこと」を
       確認する。未実装のまま進めた結果、`webhook-json-output` 第1回実行で
-      `unittest discover` が pytest 風テストを 0 件収集（rc=5）し、wーカーが3試行
+      `unittest discover` が pytest 風テストを 0 件収集（rc=5）し、ワーカーが3試行
       無駄になった。check 自体が未検証であることが失敗の主因。
       `webhook-json-output-r2` で check 修正後、1試行で verified・9.3 分。
+      **r3/r3b で手運用として必須実施済み**（submit 直前に disposable clone で
+      `rc=0・collected=10` を確認）。CLI `submit` 内の自動化は `eval_report.py`
+      実装時に intake へ組み込む（未）。
 - [ ] `scripts/eval_report.py`: tier 別 attempt 数・修正回数・所要時間・費用の
       比較レポート生成（未報告費用をゼロにしない既存方針を維持）
 - [ ] 固定リプレイスイート拡充: `examples/schema-export-replay.json` に続き5〜10件
@@ -52,7 +55,9 @@ completed から元リポジトリ反映までの人手パッチ手渡しを、�
 - [x] `integrate` 段階追加: `completed -> integrate_ready -> integrated`（`34c4384`、テスト3本追加・計50 OK）
 - [x] patch 生成: `integration-patch`（消化用 clean clone で差分凍結 + sha256 receipt）
       統合後状態での受入コマンド再実行は既存の check 群で人手実行可能
-- [ ] conflict 検出（クリーン clone 適用 test）と境界超過の `waiting_human` 化
+- [x] conflict 検出（クリーン clone 適用 test）: r3b で実証（`apply --check` CLEAN +
+      適用ツリーで suite rc=0）。境界超過の `waiting_human` 化は済（既存の
+      allowed/protected 境界が submit 時に検証済み）
 - [x] push / merge / 公開を引き続き構造的に持たない境界として明文化（`mark-integrated` は sha 記録のみ）
 - [ ] イベントテーブルの追記専用化・再生可能化（dsh の durable event ログPatterns 移植）
 
@@ -85,3 +90,27 @@ completed から元リポジトリ反映までの人手パッチ手渡しを、�
 - check preflight（intake 必須）: r1 失敗の根拠。`eval_report.py` 実装時に intake へ組み込む。
 - 統合は seam 経由: 次の E2E（r3）は `integration-patch → mark-integrated` を自動で通し、
   途切れない証跡チェーンを証拠として残す。
+
+## 追記 2026-11-08（r3b: 途切れない証跡チェーンの実証完了）
+
+### r3 の失敗とアダプタ修正（`d7b3e2a`）
+- r3（`webhook-json-pretty`）: ワーカーは正しく実装・suite rc=0 相当だったのに、
+  `NEEDS_DECISION` の **substring 判定が散文の言及に誤発火**し verify 前に
+  `waiting_human` へエスカレート。かつ **stdout を保存していなかったため事後検証不能**。
+- 修正2点:
+  1. 拒否判定を **行頭完全一致マーカー**（`NEEDS_DECISION` 単独 / `NEEDS_DECISION: 理由`）へ Tighten。
+     誤 ready は controller のクリーンコピー再実行＋独立レビューが担保するので、
+     「疑わしきは verify へ」が安全側の設計。
+  2. backend の全ターン（成功/失敗）を `<runtime>/executor-logs/<task>.<role>.log`
+     へ追記保存。以後、エスカレーションは必ず事後監査可能。
+- テスト4本追加（散文言及は発火しない/裸マーカーは発火/stdout永続化/エラー永続化）で **56 OK**。
+- r3 は `closed`（reason に誤判定の事実と修正 SHA を正直に記録）。
+
+### r3b: C' 完全ライフサイクルを無傷で貫通
+`submit(+preflight rc=0) → 実装1試行 → controller verify rc=0 → 独立レビュー PASS →
+integration-patch (sha256 7fddc8e2…, 8535B) → クリーン clone apply --check CLEAN +
+適用ツリー suite rc=0 → 人手 push 承認 → push 77a40d9 → mark-integrated (integrated_at 記録)`
+- 出荷コミット `77a40d9`（v1.2.0）はレビュー済み patch バイトそのもの。r2 の drift 再発なし。
+- `integrated` 状態は期限切れ免除・外部 revision バインドで台帳確定。
+- **C' のゴール（途切れない証跡チェーン）実証完了。** 残りは自動化（preflight in submit、
+  events 追記専用化、eval_report.py）。
