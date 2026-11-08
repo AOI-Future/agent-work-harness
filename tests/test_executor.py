@@ -104,6 +104,48 @@ class ExecutorSeamTest(unittest.TestCase):
         view = run_worker(self.control(), self.spec.id, "stub-worker", refusing, 60.0)
         self.assertEqual(view["state"], "waiting_human")
 
+    def test_prose_mentioning_marker_does_not_refuse(self) -> None:
+        # r3 regression: a completed worker that merely discusses the marker in
+        # prose must NOT be escalated; the controller verifies instead.
+        def verbose_but_done(prompt: str, packet: dict[str, Any], workspace: Path, t: float) -> str:
+            (workspace / "src/pricing.py").write_text(
+                "def total(amount, discount):\n    return amount - discount\n"
+            )
+            return (
+                "実装を完了しました。\n"
+                "NEEDS_DECISION が必要な場合のみこのマーカーを出力する運用ですが、\n"
+                "本件では判断を要さず、全基準を満たしたため ready とします。\n"
+                "NEEDS_DECISION は不要です。"
+            )
+
+        view = run_worker(self.control(), self.spec.id, "stub-worker", verbose_but_done, 60.0)
+        self.assertEqual(view["state"], "verifying")
+
+    def test_bare_marker_still_refuses(self) -> None:
+        def bare(prompt: str, packet: dict[str, Any], workspace: Path, t: float) -> str:
+            return "停止します\nNEEDS_DECISION"
+
+        view = run_worker(self.control(), self.spec.id, "stub-worker", bare, 60.0)
+        self.assertEqual(view["state"], "waiting_human")
+
+    def test_worker_output_is_persisted_for_audit(self) -> None:
+        log_dir = self.root / "executor-logs"
+        run_worker(self.control(), self.spec.id, "stub-worker", self.fixing_backend, 60.0, log_dir)
+        logged = (log_dir / f"{self.spec.id}.worker.log").read_text(encoding="utf-8")
+        self.assertIn("implemented", logged)
+        self.assertIn("===", logged)
+
+    def test_backend_error_is_persisted_for_audit(self) -> None:
+        log_dir = self.root / "executor-logs"
+
+        def broken(prompt: str, packet: dict[str, Any], workspace: Path, t: float) -> str:
+            raise ExecutorError("session died mid-turn")
+
+        view = run_worker(self.control(), self.spec.id, "stub-worker", broken, 60.0, log_dir)
+        self.assertEqual(view["state"], "waiting_human")
+        logged = (log_dir / f"{self.spec.id}.worker-error.log").read_text(encoding="utf-8")
+        self.assertIn("session died mid-turn", logged)
+
     def test_timeout_is_capped_by_lease(self) -> None:
         packet = {"lease": {"expires_at": time.time() + 10}}
         self.assertLessEqual(lease_capped_timeout(packet, 1500.0), 1.0)

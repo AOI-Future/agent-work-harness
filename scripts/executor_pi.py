@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,34 @@ Backend = Callable[[str, dict[str, Any], Path, float], str]
 
 class ExecutorError(RuntimeError):
     """The adapter stopped without submitting; the lease recovers via the controller."""
+
+
+# A worker refusal must be an explicit marker line, not prose that merely
+# mentions the token. A bare ``NEEDS_DECISION`` or ``NEEDS_DECISION: <reason>``
+# (half- or full-width colon) is a refusal; a negating sentence such as
+# ``NEEDS_DECISION is not required`` or ``NEEDS_DECISION が必要な場合`` is not.
+# This bias is safe: a wrongly-"ready" worker is backstopped by the controller,
+# which re-runs every check on a clean copy and then an independent reviewer,
+# whereas a false refusal silently discards correct work before any verification.
+_REFUSION = re.compile(r"NEEDS_DECISION(?:[:：][^\n]*)?")
+
+
+def _persist(log_dir: Path | None, task_id: str, role: str, text: str) -> None:
+    """Append the raw backend turn to an auditable log. Never breaks the seam."""
+    if log_dir is None:
+        return
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with (log_dir / f"{task_id}.{role}.log").open("a", encoding="utf-8") as handle:
+            handle.write(f"\n=== {stamp} ===\n")
+            handle.write(text[-20000:])
+    except OSError:
+        pass
+
+
+def refuses(stdout: str) -> bool:
+    return any(_REFUSION.fullmatch(line.strip()) for line in stdout.splitlines())
 
 
 def worker_prompt(packet: dict[str, Any]) -> str:
@@ -191,28 +220,47 @@ def lease_capped_timeout(packet: dict[str, Any], timeout: float) -> float:
 
 
 def run_worker(
-    control: Control, task_id: str, actor: str, backend: Backend, timeout: float
+    control: Control,
+    task_id: str,
+    actor: str,
+    backend: Backend,
+    timeout: float,
+    log_dir: Path | None = None,
 ) -> dict[str, Any]:
     packet = control("claim", {"task": task_id, "role": "worker", "actor": actor})
     workspace = Path(packet["lease"]["workspace"])
     timeout = lease_capped_timeout(packet, timeout)
     try:
         stdout = backend(worker_prompt(packet), packet, workspace, timeout)
-        refusal = any(line.strip().startswith("NEEDS_DECISION") for line in stdout.splitlines())
-        outcome: str = "needs_decision" if refusal else "ready"
-    except ExecutorError:
+        _persist(log_dir, task_id, "worker", stdout)
+        outcome: str = "needs_decision" if refuses(stdout) else "ready"
+    except ExecutorError as exc:
+        _persist(log_dir, task_id, "worker-error", f"{type(exc).__name__}: {exc}")
         outcome = "needs_decision"
+    if outcome == "needs_decision":
+        print(
+            f"[refusal] task {task_id}: worker escalated to needs_decision; "
+            f"raw output logged to {log_dir or '(logging disabled)'}",
+            file=sys.stderr,
+        )
     report = {"token": packet["lease"]["token"], "outcome": outcome}
     return control("report", {"task": task_id, "report": report})
 
 
 def run_reviewer(
-    control: Control, task_id: str, actor: str, backend: Backend, timeout: float
+    control: Control,
+    task_id: str,
+    actor: str,
+    backend: Backend,
+    timeout: float,
+    log_dir: Path | None = None,
 ) -> dict[str, Any]:
     packet = control("claim", {"task": task_id, "role": "reviewer", "actor": actor})
     workspace = Path(packet["lease"]["workspace"])
     timeout = lease_capped_timeout(packet, timeout)
-    verdict = parse_verdict(backend(reviewer_prompt(packet), packet, workspace, timeout))
+    stdout = backend(reviewer_prompt(packet), packet, workspace, timeout)
+    _persist(log_dir, task_id, "reviewer", stdout)
+    verdict = parse_verdict(stdout)
     return control(
         "review",
         {
@@ -239,17 +287,18 @@ def run_loop(
     worker_backend: Backend,
     reviewer_backend: Backend,
     timeout: float,
+    log_dir: Path | None = None,
 ) -> dict[str, Any]:
     # Each fix cycle spends ~5 iterations (inspect/worker/inspect/verify/review-inspect);
     # the controller escalates on its own attempt budgets long before this bound.
     for _ in range(60):
         state = str(control("inspect", {"task": task_id})["state"])
         if state == "ready":
-            run_worker(control, task_id, worker_actor, worker_backend, timeout)
+            run_worker(control, task_id, worker_actor, worker_backend, timeout, log_dir)
         elif state == "verifying":
             control("verify", {"task": task_id})
         elif state == "review_ready":
-            run_reviewer(control, task_id, reviewer_actor, reviewer_backend, timeout)
+            run_reviewer(control, task_id, reviewer_actor, reviewer_backend, timeout, log_dir)
         elif state in {"completed", "waiting_human", "escalated"}:
             return control("inspect", {"task": task_id})
         else:
@@ -274,6 +323,7 @@ def main() -> int:
     )
     args = root.parse_args()
     control = cli_control(args.runtime.absolute())
+    log_dir = args.runtime.absolute() / "executor-logs"
     if args.backend_cmd:
         worker_backend = reviewer_backend = cmd_backend(list(args.backend_cmd))
     else:
@@ -282,11 +332,11 @@ def main() -> int:
     try:
         if args.mode == "worker":
             result: dict[str, Any] = run_worker(
-                control, args.task, args.worker_actor, worker_backend, args.timeout
+                control, args.task, args.worker_actor, worker_backend, args.timeout, log_dir
             )
         elif args.mode == "reviewer":
             result = run_reviewer(
-                control, args.task, args.reviewer_actor, reviewer_backend, args.timeout
+                control, args.task, args.reviewer_actor, reviewer_backend, args.timeout, log_dir
             )
         else:
             result = run_loop(
@@ -297,6 +347,7 @@ def main() -> int:
                 worker_backend,
                 reviewer_backend,
                 args.timeout,
+                log_dir,
             )
     except ExecutorError as exc:
         print(json.dumps({"error": "adapter_stopped", "reason": str(exc)}))
