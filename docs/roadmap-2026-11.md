@@ -75,8 +75,8 @@ completed から元リポジトリ反映までの人手パッチ手渡しを、�
 - 結論: 統合は必ず `integration-patch`（レビュー時リビジョンを再現する使い捨てクローン）
   経由で行い、手作業 cp は使わない。これが C' 自動化を必須とする実証根拠。
 
-### human_close で ledger を正直に確定（escดาลated / waiting_human → closed）
-- r1: `closed`（reason: check argv が unittest を指していた、target は pytest 式、escダルートは妥当）
+### human_close で ledger を正直に確定（escalated / waiting_human → closed）
+- r1: `closed`（reason: check argv が unittest を指していた、target は pytest 式、エスカレーションは妥当）
 - r2: `closed` + `external_revision: 896f301`。`evidence_passed: False` を**消さずに保持**
   （=pipeline 外 shipping を正直に記録）。 whitewash しないのが要点。
 - コミット `2d19da1` feat: human_close（CLI `close <task> --reason [--external-sha]`）。
