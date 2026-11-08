@@ -17,6 +17,9 @@ runtimeの保存先はsource_repoの外に置く。
 
 ```bash
 python3 -m harness.cli submit /absolute/path/task.json
+# submit は intake で check preflight を実行する（--preflight enforce|record|skip、既定 enforce）。
+# enforce は赤 baseline を queue 入り前に拒否する（r1 型の無駄課金を防ぐ）。
+# 故意に赤な baseline のデモ・再現タスクは --preflight record を明示する。
 python3 -m harness.cli claim example-task --role worker --actor session-implementation
 ```
 

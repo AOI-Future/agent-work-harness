@@ -40,10 +40,12 @@ dsh の `acp` / `headless` profile を将来そのまま第2の実行体とし�
       無駄になった。check 自体が未検証であることが失敗の主因。
       `webhook-json-output-r2` で check 修正後、1試行で verified・9.3 分。
       **r3/r3b で手運用として必須実施済み**（submit 直前に disposable clone で
-      `rc=0・collected=10` を確認）。CLI `submit` 内の自動化は `eval_report.py`
-      実装時に intake へ組み込む（未）。
-- [ ] `scripts/eval_report.py`: tier 別 attempt 数・修正回数・所要時間・費用の
-      比較レポート生成（未報告費用をゼロにしない既存方針を維持）
+      `rc=0・collected=10` を確認）。**CLI `submit` 内の自動化を `28fea86` で実装**
+      （`--preflight enforce|record|skip`、既定 enforce。結果は check tail 込みで
+      submitted イベントに逐語記録）。
+- [x] `scripts/eval_report.py`: tier 別 attempt 数・修正回数・所要時間・human_seconds・
+      preflight 成否の比較レポート（read-only 台帳アクセス。`28fea86`）
+      （未報告費用をゼロにしない既存方針を維持）
 - [ ] 固定リプレイスイート拡充: `examples/schema-export-replay.json` に続き5〜10件
 - [ ] 評価アームに dsh + DeepSeek を登録（yaml 定義は先行、実測は Node 環境整備後）
 - [ ] ハーネス変更時のリプレイを CI 化
@@ -59,7 +61,8 @@ completed から元リポジトリ反映までの人手パッチ手渡しを、�
       適用ツリーで suite rc=0）。境界超過の `waiting_human` 化は済（既存の
       allowed/protected 境界が submit 時に検証済み）
 - [x] push / merge / 公開を引き続き構造的に持たない境界として明文化（`mark-integrated` は sha 記録のみ）
-- [ ] イベントテーブルの追記専用化・再生可能化（dsh の durable event ログPatterns 移植）
+- [x] イベントテーブルの追記専用化・再生可能化（dsh の durable event ログ Patterns 移植。
+      SQLite トリガーで UPDATE/DELETE を物理拒否 + `replay` は汚損行で失敗。`28fea86`）
 
 ## dsh 定点観測チェックリスト（深結合解禁の条件）
 
