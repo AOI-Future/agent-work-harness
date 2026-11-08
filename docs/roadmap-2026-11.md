@@ -54,7 +54,8 @@ dsh の `acp` / `headless` profile を将来そのまま第2の実行体とし�
 - [x] 評価アームに dsh + DeepSeek を登録（`examples/arms/dsh-deepseek.yaml`、定義のみ先行。
       実測は prerequisites（Node 24.9・pnpm 11・security audit・ACP 安定）全成立まで blocked）
 - [x] ハーネス変更時のリプレイを CI 化: local gate `make ci` = verify + replay
-      （remote 未設定のため GitHub Actions は未稼働。remote 接続時に移植）
+     移植済み: remote `AOI-Future/agent-work-harness`（public）公開、
+      `.github/workflows/ci.yml` が push/PR ごとに `make ci` を実行）
 
 ## C'. 統合の自動化（human gate 維持）
 
