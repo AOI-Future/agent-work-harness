@@ -1,0 +1,9 @@
+{
+  "schema_version": "v1",
+  "case": "preflight-record-admits-with-honest-journal",
+  "scenario": "preflight_record",
+  "title": "Record mode admits a red baseline (legitimate make-the-test-pass contract) and journals the red tail verbatim",
+  "spec_overrides": {},
+  "preflight": "record",
+  "expected": { "state": "ready", "error": null, "journal_preflight_passed": false }
+}

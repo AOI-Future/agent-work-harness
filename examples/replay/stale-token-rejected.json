@@ -1,0 +1,9 @@
+{
+  "schema_version": "v1",
+  "case": "stale-token-rejected",
+  "scenario": "stale_token",
+  "title": "A report carrying a forged or expired lease token is refused and leaves state untouched",
+  "spec_overrides": {},
+  "preflight": "record",
+  "expected": { "state": "implementing", "error": "HarnessError" }
+}

@@ -1,0 +1,9 @@
+{
+  "schema_version": "v1",
+  "case": "self-review-rejected",
+  "scenario": "self_review",
+  "title": "The implementing actor may never review its own work; the seam refuses before any verdict",
+  "spec_overrides": {},
+  "preflight": "record",
+  "expected": { "state": "review_ready", "error": "HarnessError" }
+}

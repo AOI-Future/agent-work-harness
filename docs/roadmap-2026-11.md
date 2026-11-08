@@ -46,9 +46,13 @@ dsh の `acp` / `headless` profile を将来そのまま第2の実行体とし�
 - [x] `scripts/eval_report.py`: tier 別 attempt 数・修正回数・所要時間・human_seconds・
       preflight 成否の比較レポート（read-only 台帳アクセス。`28fea86`）
       （未報告費用をゼロにしない既存方針を維持）
-- [ ] 固定リプレイスイート拡充: `examples/schema-export-replay.json` に続き5〜10件
-- [ ] 評価アームに dsh + DeepSeek を登録（yaml 定義は先行、実測は Node 環境整備後）
-- [ ] ハーネス変更時のリプレイを CI 化
+- [x] 固定リプレイスイート拡充: `examples/replay/` に固定ケース6件＋実行器
+      `scripts/replay_suite.py`（happy 全連鎖 / self-review 拒否 / stale-token 拒否 /
+      scope 逸脱待機 / preflight enforce 拒否 / record 正直受理）。`make replay` で6/6
+- [x] 評価アームに dsh + DeepSeek を登録（`examples/arms/dsh-deepseek.yaml`、定義のみ先行。
+      実測は prerequisites（Node 24.9・pnpm 11・security audit・ACP 安定）全成立まで blocked）
+- [x] ハーネス変更時のリプレイを CI 化: local gate `make ci` = verify + replay
+      （remote 未設定のため GitHub Actions は未稼働。remote 接続時に移植）
 
 ## C'. 統合の自動化（human gate 維持）
 

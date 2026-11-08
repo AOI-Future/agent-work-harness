@@ -1,0 +1,9 @@
+{
+  "schema_version": "v1",
+  "case": "happy-integrated",
+  "scenario": "happy",
+  "title": "Full unbroken chain: submit -> fix -> verify -> independent review -> integration patch -> integrated",
+  "spec_overrides": {},
+  "preflight": "record",
+  "expected": { "state": "integrated", "error": null }
+}

@@ -2,7 +2,7 @@ PY ?= python3
 RUFF ?= /Users/shugo/.local/bin/ruff
 TYPE_PY ?= /Users/shugo/project/aoi-system-role-persistence-rebuild/.venv/bin/python
 
-.PHONY: verify test lint typecheck demo help
+.PHONY: verify test lint typecheck demo replay ci help
 verify: lint typecheck test
 
 lint:
@@ -18,6 +18,11 @@ test:
 
 demo:
 	$(PY) -m scripts.demo
+
+replay:
+	$(PY) -m scripts.replay_suite
+
+ci: verify replay
 
 help:
 	$(PY) -m harness.cli --help

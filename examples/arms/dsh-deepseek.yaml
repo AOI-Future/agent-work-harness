@@ -1,0 +1,26 @@
+# Evaluation arm definition (ahead of execution).
+# deepseek-harness is developer preview with breaking changes and no completed
+# security audit. This file registers the arm contract only; it is NOT runnable
+# until BOTH prerequisites below are checked. Do not auto-execute this file.
+arm: dsh-deepseek
+status: blocked
+executor:
+  project: deepseek-harness
+  profile: headless # ACP-compatible seam; see docs/executor-seam.md
+  model: deepseek # provider config lives outside this file
+prerequisites:
+  - node_24_9_or_newer_installed: false # required by dsh; not present locally
+  - pnpm_11_installed: false
+  - security_audit_completed: false # hard blocker for any coupling
+  - acp_profile_stable: false # watch upstream releases
+seam:
+  input: claim_packet_json # identical to pi arm; executor-swappable by design
+  output: worker_report_json
+  refusal_marker: NEEDS_DECISION # full-match line rule, same as pi adapter
+evaluation:
+  fixed_replay_first: true # reproduce examples/replay/* before real tasks
+  arms_compared: [pi-qwen-local, codex, dsh-deepseek]
+notes: >
+  Registered 2026-11-08 per roadmap B'. First execution requires an explicit
+  human GO and a completed audit; until then this arm must not touch the
+  control plane's live ledger.

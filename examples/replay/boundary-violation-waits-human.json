@@ -1,0 +1,9 @@
+{
+  "schema_version": "v1",
+  "case": "boundary-violation-waits-human",
+  "scenario": "boundary",
+  "title": "Worker edits outside allowed_paths; verification freezes the task into waiting_human instead of trusting it",
+  "spec_overrides": { "protected_paths": ["README.md"] },
+  "preflight": "record",
+  "expected": { "state": "waiting_human", "error": null }
+}

@@ -1,0 +1,9 @@
+{
+  "schema_version": "v1",
+  "case": "preflight-enforce-rejects-red-baseline",
+  "scenario": "preflight_enforce",
+  "title": "Under enforce a red baseline never reaches the queue: the submission is refused pre-claim",
+  "spec_overrides": {},
+  "preflight": "enforce",
+  "expected": { "state": null, "error": "HarnessError" }
+}
