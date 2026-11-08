@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 import uuid
 from collections.abc import Callable
@@ -103,6 +104,9 @@ class Harness:
                 "human_count": 0,
                 "human_seconds": 0,
                 "reported_cost": None,
+                "patch": None,
+                "external_revision": None,
+                "integrated_at": None,
             }
             self._save(task, task["state"] if spec.requires_human else "submitted", {})
             return self._view(task)
@@ -169,6 +173,8 @@ class Harness:
             "completed",
             "waiting_human",
             "escalated",
+            "integrate_ready",
+            "integrated",
         }:
             task["state"] = "waiting_human"
             task["lease"] = None
@@ -427,6 +433,8 @@ class Harness:
             "changed_paths": task["changed_paths"],
             "failures": task["failures"],
             "evidence_passed": bool(task["evidence"]),
+            "patch": task.get("patch"),
+            "external_revision": task.get("external_revision"),
             "human_interventions": task["human_count"],
             "human_seconds": task["human_seconds"],
             "reported_cost": task["reported_cost"],
@@ -441,6 +449,8 @@ class Harness:
                 "review_ready": "claim independent reviewer",
                 "reviewing": "await review report",
                 "completed": "inspect local patch",
+                "integrate_ready": "human pushes upstream, then mark-integrated",
+                "integrated": "contract closed at an external revision",
                 "waiting_human": "human decision required; execution stopped",
                 "escalated": "budget exhausted; human decision required",
             }[state],
@@ -450,4 +460,69 @@ class Harness:
         with self.store.transaction():
             task = self.store.get(task_id)
             self._fresh(task)
+            return self._view(task)
+
+    def integration_patch(self, task_id: str) -> dict[str, Any]:
+        # task_id composes on-disk paths; re-check the contract identifier here.
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", task_id):
+            raise HarnessError("invalid task id for patch path")
+        # Freeze the verified workspace, then build the patch outside any DB lock.
+        with self.store.transaction():
+            task = self.store.get(task_id)
+            self._fresh(task)
+            if task["state"] != "completed":
+                raise HarnessError("integration patch requires a completed task")
+            if revision(Path(task["workspace"])) != task["verified_revision"]:
+                raise HarnessError("completed revision changed; no patch may be produced")
+            workspace, base, source = Path(task["workspace"]), task["base"], Path(task["source"])
+        staging = self.store.root / "patches" / task_id / ("stage-" + uuid.uuid4().hex)
+        # A disposable clean clone carries the verified worktree, so the frozen
+        # workspace is never mutated and new files still enter the patch.
+        copy_workspace(source, base, staging, workspace)
+        git(staging, "add", "-A")
+        diff = git(staging, "diff", "--cached", "--binary", "--text", "--no-ext-diff")
+        if not diff.strip():
+            raise HarnessError("verified patch is empty")
+        patch_path = self.store.root / "patches" / task_id / (task_id + ".patch")
+        patch_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        patch_path.write_bytes(diff)
+        patch = {
+            "path": str(patch_path),
+            "sha256": hashlib.sha256(diff).hexdigest(),
+            "bytes": len(diff),
+            "revision": task["verified_revision"],
+        }
+        with self.store.transaction():
+            task = self.store.get(task_id)
+            self._fresh(task)
+            if task["state"] != "completed":
+                raise HarnessError("task left completed state during patch generation")
+            if revision(Path(task["workspace"])) != task["verified_revision"]:
+                raise HarnessError("completed revision changed during patch generation")
+            task["patch"] = patch
+            task["state"] = "integrate_ready"
+            self._save(task, "integrate_ready", patch)
+            return self._view(task)
+
+    def mark_integrated(self, task_id: str, external_revision: str) -> dict[str, Any]:
+        # The human push happened outside the harness; this records its receipt.
+        if not re.fullmatch(r"[0-9a-f]{7,40}", external_revision):
+            raise HarnessError("external revision must be a lowercase git sha (7-40 hex)")
+        with self.store.transaction():
+            task = self.store.get(task_id)
+            if task["state"] != "integrate_ready":
+                raise HarnessError("mark-integrated requires an integrate_ready task")
+            patch = task.get("patch")
+            if not patch or not Path(patch["path"]).is_file():
+                raise HarnessError("patch file is missing; integration cannot be recorded")
+            if hashlib.sha256(Path(patch["path"]).read_bytes()).hexdigest() != patch["sha256"]:
+                raise HarnessError("patch digest mismatch; refusing to record integration")
+            task["state"] = "integrated"
+            task["external_revision"] = external_revision
+            task["integrated_at"] = self.clock()
+            self._save(
+                task,
+                "integrated",
+                {"external_revision": external_revision, "patch_sha256": patch["sha256"]},
+            )
             return self._view(task)

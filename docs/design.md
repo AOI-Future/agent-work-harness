@@ -20,7 +20,7 @@ workspace生成、SQLite transaction、scope検査、期限判定、モデルrou
 ## 状態と不変条件
 
 ```text
-queued -> ready -> implementing -> verifying -> review_ready -> reviewing -> completed
+queued -> ready -> implementing -> verifying -> review_ready -> reviewing -> completed -> integrate_ready -> integrated
                   ^                 |                         |
                   +----修正要求-----+-------------------------+
 任意の稼働状態 -> waiting_human / escalated

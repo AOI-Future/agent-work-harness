@@ -108,6 +108,7 @@ class RuntimeTest(unittest.TestCase):
 
     def test_failure_cannot_complete_and_escalation_is_bounded(self) -> None:
         tiers = []
+        view: dict[str, Any] = {}
         for _ in range(3):
             packet = self.claim()
             tiers.append(packet["lease"]["tier"])
@@ -457,6 +458,44 @@ class RuntimeTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 2)
         self.assertNotIn("do-not-echo-fixture", result.stdout + result.stderr)
+
+    def test_integration_patch_and_receipt(self) -> None:
+        self.verified()
+        self.review(self.claim("reviewer"))
+        view = self.harness.integration_patch(self.spec.id)
+        self.assertEqual(view["state"], "integrate_ready")
+        patch = Path(view["patch"]["path"])
+        self.assertTrue(patch.is_file())
+        self.assertIn(b"src/pricing.py", patch.read_bytes())
+        with self.assertRaises(HarnessError):
+            self.harness.mark_integrated(self.spec.id, "g" * 8)
+        with self.assertRaises(HarnessError):
+            self.harness.integration_patch("../escape")
+        view = self.harness.mark_integrated(self.spec.id, "0123456")
+        self.assertEqual(view["state"], "integrated")
+        self.assertEqual(view["external_revision"], "0123456")
+        with self.assertRaises(HarnessError):
+            self.harness.integration_patch(self.spec.id)
+
+    def test_integration_refuses_tampered_patch(self) -> None:
+        self.verified()
+        self.review(self.claim("reviewer"))
+        view = self.harness.integration_patch(self.spec.id)
+        patch = Path(view["patch"]["path"])
+        patch.write_bytes(patch.read_bytes() + b"tampered\n")
+        with self.assertRaises(HarnessError):
+            self.harness.mark_integrated(self.spec.id, "0123456")
+        self.assertEqual(self.harness.inspect(self.spec.id)["state"], "integrate_ready")
+
+    def test_integration_states_do_not_expire(self) -> None:
+        self.verified()
+        self.review(self.claim("reviewer"))
+        self.harness.integration_patch(self.spec.id)
+        self.now += 999999
+        self.assertEqual(self.harness.inspect(self.spec.id)["state"], "integrate_ready")
+        self.harness.mark_integrated(self.spec.id, "0123456")
+        self.now += 999999
+        self.assertEqual(self.harness.inspect(self.spec.id)["state"], "integrated")
 
 
 class CheckTest(unittest.TestCase):

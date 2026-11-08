@@ -79,6 +79,17 @@ small/strongはroutingの推奨tier。実際のLuna/Sol/Astra選択はexecutor�
 
 completedのworkspaceとrevisionを確認してローカル差分を取り出す。
 元リポジトリへの反映、PR/push/mergeはcontrollerが勝手に実行しない。
+
+### 統合(promote)コマンド
+```bash
+# completed -> integrate_ready: reviewed patchを(runtime/patches配下)に凍結
+python3 -m harness.cli --runtime <RUNTIME> integration-patch <task>
+# 人間が上流へpush/mergeした後、そのcommit shaを receiptとして記録
+python3 -m harness.cli --runtime <RUNTIME> mark-integrated <task> <external-commit-sha>
+```
+patchは消化用clean cloneで生成し（新規fileも含まれる）、凍結workspace自体は変更しない。
+patchのsha256を記録し、`mark-integrated`時に改ざん検知する。integrate_ready/integratedは期限切れ対象外。
+
 複数タスクの成果を統合した状態でも受入チェックを再実行する。
 patchが必要なら、完了済みコピーのchanged_pathsだけをstageし、base_commitに対する
 `git diff --cached --binary`をローカルfileへ保存する。これで新規fileと削除も含められる。

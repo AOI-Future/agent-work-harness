@@ -49,6 +49,16 @@ def parser() -> argparse.ArgumentParser:
     intervention.add_argument("task")
     intervention.add_argument("--seconds", type=float, required=True)
     intervention.add_argument("--cost", type=float)
+    patch = commands.add_parser(
+        "integration-patch",
+        help="freeze a completed task as a reviewed patch for human integration",
+    )
+    patch.add_argument("task")
+    integrated = commands.add_parser(
+        "mark-integrated", help="record the external commit sha of a push"
+    )
+    integrated.add_argument("task")
+    integrated.add_argument("external_revision")
     commands.add_parser("list")
     return root
 
@@ -82,6 +92,10 @@ def main() -> int:
             if view["state"] != "completed":
                 raise HarnessError("evidence is available only for a current completed revision")
             result = harness.store.get(args.task)["evidence"]
+        elif operation == "integration-patch":
+            result = harness.integration_patch(args.task)
+        elif operation == "mark-integrated":
+            result = harness.mark_integrated(args.task, args.external_revision)
         else:
             command: dict[str, Any] = {"action": operation}
             if operation == "claim":
