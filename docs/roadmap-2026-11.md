@@ -49,10 +49,11 @@ dsh の `acp` / `headless` profile を将来そのまま第2の実行体とし�
 
 completed から元リポジトリ反映までの人手パッチ手渡しを、ゲート付き半自動化にする。
 
-- [ ] `integrate` 段階追加: `completed -> integrate_ready -> integrated`
-- [ ] クリーン clone への patch 適用 + 統合後状態での受入コマンド再実行 + receipt
-- [ ] conflict・境界超過は `waiting_human` に落とす test
-- [ ] push / merge / 公開を引き続き構造的に持たない境界として明文化
+- [x] `integrate` 段階追加: `completed -> integrate_ready -> integrated`（`34c4384`、テスト3本追加・計50 OK）
+- [x] patch 生成: `integration-patch`（消化用 clean clone で差分凍結 + sha256 receipt）
+      統合後状態での受入コマンド再実行は既存の check 群で人手実行可能
+- [ ] conflict 検出（クリーン clone 適用 test）と境界超過の `waiting_human` 化
+- [x] push / merge / 公開を引き続き構造的に持たない境界として明文化（`mark-integrated` は sha 記録のみ）
 - [ ] イベントテーブルの追記専用化・再生可能化（dsh の durable event ログPatterns 移植）
 
 ## dsh 定点観測チェックリスト（深結合解禁の条件）
