@@ -1,8 +1,9 @@
 name: CI
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
+    branches: [main, develop]
 
 jobs:
   verify-replay:
@@ -13,4 +14,4 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install pydantic ruff mypy
-      - run: make ci RUFF=ruff TYPE_PY=python3
+      - run: make ci PY=python3 RUFF=ruff TYPE_PY=python3
