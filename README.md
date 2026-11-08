@@ -5,6 +5,7 @@
 
 - [設計](docs/design.md)
 - [使い方と運用](docs/operations.md)
+- [分支とリリース運用](CONTRIBUTING.md)
 - [最初の案・追加アドバイスとの対応](docs/coverage.md)
 
 ```bash
